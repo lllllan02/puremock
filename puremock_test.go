@@ -20,13 +20,16 @@ type Interface interface {
 	IdentString(rune, string)
 	IdentError(error)
 	Ellipsis(...string)
-	ArrayType([]string, [10]string, []*context.Context, []func(string))
+	ArrayType([]string, [10]string, []context.Context, []func(string))
 	MapType(map[string]string, map[string][]string)
 	SelectorExpr(context.Context, Local, tmp.Remote, LocalInterface, tmp.RemoteInterface)
-	StarPointer(*int, *context.Context)
-	FuncType(func(), func(string, string, string) (error, error), func(a, b, c string) (d, e, f string))
+	StarPointer(*int, context.Context)
+	FuncType(func() error, func(string, string, string) (error, error), func(a, b, c string) (d, e, f string))
 	InterfaceType(interface{}, []interface{})
-	ChanType(chan int, chan []int, chan []func(string) []string)
+	ChanType(chan int, chan []int, chan []func(string) []string) error
+	Return() (int, string, []string, Local, LocalInterface, context.Context)
+	Returns() (a, b, c int, d, e string)
+	Funcs(a, b, c func()) (d, e, f func())
 }
 
 func Test_mock(t *testing.T) {
