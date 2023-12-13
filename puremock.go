@@ -16,8 +16,11 @@ var (
 	source      *string
 	destination *string
 	packageName *string
+	disjoint    bool
+	importName  string
 
 	importMap map[string]bool
+	typeMap   map[string]bool
 )
 
 func main() {
@@ -27,6 +30,7 @@ func main() {
 
 	flag.Parse()
 
+	disjoint = filepath.Dir(*source) != filepath.Dir(*destination)
 	if *source == "" {
 		fmt.Println("You must set the source.")
 		flag.PrintDefaults()
@@ -71,6 +75,7 @@ func mock(path string) (string, error) {
 		mocks   = []Mock{}
 	)
 	importMap = make(map[string]bool)
+	typeMap = make(map[string]bool)
 
 	// Parse the Go file
 	fset := token.NewFileSet()
@@ -82,6 +87,7 @@ func mock(path string) (string, error) {
 	if packageName != nil && *packageName != "" {
 		pkgName = *packageName
 	}
+	importName = genImportName(file.Name.Name, file.Imports)
 
 	// type ... interface{}
 	for _, decl := range file.Decls {
@@ -96,6 +102,8 @@ func mock(path string) (string, error) {
 				continue
 			}
 
+			typeMap[typeSpec.Name.Name] = true
+
 			interfaceType, ok := typeSpec.Type.(*ast.InterfaceType)
 			if !ok {
 				continue
@@ -108,7 +116,12 @@ func mock(path string) (string, error) {
 					continue
 				}
 
-				mock.Funcs = append(mock.Funcs, fmt.Sprintf("func (%s) %s {\n    return\n}", mock.Name, funcType(ft, method.Names, true)))
+				if ft.Results == nil {
+					mock.Funcs = append(mock.Funcs, fmt.Sprintf("func (%s) %s {\n}", mock.Name, funcType(ft, method.Names, true)))
+				} else {
+					mock.Funcs = append(mock.Funcs, fmt.Sprintf("func (%s) %s {\n    return\n}", mock.Name, funcType(ft, method.Names, true)))
+				}
+
 			}
 			mocks = append(mocks, mock)
 		}
@@ -124,6 +137,13 @@ func mock(path string) (string, error) {
 		if importMap[name] {
 			imports = append(imports, fmt.Sprintf("    %s \"%s\"", name, path))
 		}
+	}
+	if importMap[importName] {
+		path, err := GetPackagePath(*source)
+		if err != nil {
+			panic(err)
+		}
+		imports = append(imports, fmt.Sprintf("    %s \"%s\"", importName, path))
 	}
 	if len(imports) > 0 {
 		content = fmt.Sprintf("%s\n\nimport(\n%s\n)", content, strings.Join(imports, "\n"))
@@ -199,8 +219,13 @@ func paramType(param ast.Expr) string {
 	var t string
 	switch pt := param.(type) {
 	case *ast.Ident:
-		// TODO 如果 mock 地址与原地址不在同一个包，并且使用了源包中的类型，需要引用源包
-		t = pt.Name
+		// 如果 mock 地址与原地址不在同一个包，并且使用了源包中的类型，需要引用源包
+		if disjoint && typeMap[pt.Name] {
+			importMap[importName] = true
+			t = fmt.Sprintf("%s.%s", importName, pt.Name)
+		} else {
+			t = pt.Name
+		}
 	case *ast.Ellipsis:
 		t = fmt.Sprintf("...%s", paramType(pt.Elt))
 	case *ast.BasicLit:
@@ -225,6 +250,27 @@ func paramType(param ast.Expr) string {
 	}
 
 	return t
+}
+
+func genImportName(name string, imports []*ast.ImportSpec) string {
+	m := make(map[string]bool)
+	for _, ipt := range imports {
+		path := strings.Trim(ipt.Path.Value, "\"")
+		name := filepath.Base(path)
+		if ipt.Name != nil {
+			name = ipt.Name.Name
+		}
+		m[name] = true
+	}
+	if !m[name] {
+		return name
+	}
+	for i := 0; ; i++ {
+		n := fmt.Sprintf("%s%d", name, i)
+		if !m[n] {
+			return n
+		}
+	}
 }
 
 func GetPackagePath(path string) (pkg string, err error) {

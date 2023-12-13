@@ -1,4 +1,4 @@
-package tmp
+package remote
 
 type Remote struct{}
 
