@@ -1,7 +1,7 @@
 package main
 
 import (
-	"context"
+	context "context"
 	"testing"
 
 	"github.com/bytedance/mockey"
@@ -22,7 +22,7 @@ type Interface interface {
 	Ellipsis(...string)
 	ArrayType([]string, [10]string, []context.Context, []func(string))
 	MapType(map[string]string, map[string][]string)
-	SelectorExpr(context.Context, Local, tmp.Remote, LocalInterface, tmp.RemoteInterface)
+	SelectorExpr(context.Context, Local, tmp.Remote, LocalInterface, tmp.RemoteInterface, tmp.Func)
 	StarPointer(*int, context.Context)
 	FuncType(func() error, func(string, string, string) (error, error), func(a, b, c string) (d, e, f string))
 	InterfaceType(interface{}, []interface{})

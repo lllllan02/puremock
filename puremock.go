@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -11,28 +12,75 @@ import (
 	"strings"
 )
 
-func mock(path string) error {
+var (
+	source      *string
+	destination *string
+	packageName *string
+
+	importMap map[string]bool
+)
+
+func main() {
+	source = flag.String("source", "", "(source mode) Input Go source file; enables source mode.")
+	destination = flag.String("destination", "", "Output file; defaults to stdout.")
+	packageName = flag.String("package", "", "Package of the generated code; defaults to the package of the input")
+
+	flag.Parse()
+
+	if *source == "" {
+		fmt.Println("You must set the source.")
+		flag.PrintDefaults()
+		return
+	}
+
+	content, err := mock(*source)
+	if err != nil {
+		panic(err)
+	}
+
+	if *destination != "" {
+		file, err := os.Create(*destination)
+		if err != nil {
+			panic(err)
+		}
+		defer file.Close()
+
+		fmt.Fprintln(file, content)
+	} else {
+		fmt.Println(content)
+	}
+}
+
+type Mock struct {
+	Name  string
+	Funcs []string
+}
+
+func (m Mock) String() string {
+	if len(m.Funcs) == 0 {
+		return fmt.Sprintf("type Mock%s struct{}", m.Name)
+	}
+	return fmt.Sprintf("type %s struct{}\n\n%s", m.Name, strings.Join(m.Funcs, "\n\n"))
+}
+
+func mock(path string) (string, error) {
 	var (
-		pkgName   string
-		importMap = make(map[string]string)
+		content = ""
+		pkgName = ""
+		imports = []string{}
+		mocks   = []Mock{}
 	)
+	importMap = make(map[string]bool)
 
 	// Parse the Go file
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, path, nil, 0)
 	if err != nil {
-		return err
+		return "", err
 	}
 	pkgName = file.Name.Name
-	fmt.Printf("pkgName: %v\n", pkgName)
-
-	// imports
-	for _, ipt := range file.Imports {
-		name := filepath.Base(ipt.Path.Value)
-		if ipt.Name != nil {
-			name = ipt.Name.Name
-		}
-		importMap[name] = ipt.Path.Value
+	if packageName != nil && *packageName != "" {
+		pkgName = *packageName
 	}
 
 	// type ... interface{}
@@ -53,24 +101,45 @@ func mock(path string) error {
 				continue
 			}
 
+			mock := Mock{Name: fmt.Sprintf("Mock%s", typeSpec.Name.Name)}
 			for _, method := range interfaceType.Methods.List {
 				ft, ok := method.Type.(*ast.FuncType)
 				if !ok {
 					continue
 				}
 
-				fmt.Printf("funcType(ft, method.Names...): %v {\n    return\n}\n", funcType(ft, method.Names, true))
+				mock.Funcs = append(mock.Funcs, fmt.Sprintf("func (%s) %s {\n    return\n}", mock.Name, funcType(ft, method.Names, true)))
 			}
+			mocks = append(mocks, mock)
 		}
 	}
 
-	return nil
+	content = fmt.Sprintf("package %s", pkgName)
+	for _, ipt := range file.Imports {
+		path := strings.Trim(ipt.Path.Value, "\"")
+		name := filepath.Base(path)
+		if ipt.Name != nil {
+			name = ipt.Name.Name
+		}
+		if importMap[name] {
+			imports = append(imports, fmt.Sprintf("    %s \"%s\"", name, path))
+		}
+	}
+	if len(imports) > 0 {
+		content = fmt.Sprintf("%s\n\nimport(\n%s\n)", content, strings.Join(imports, "\n"))
+	}
+	for _, mock := range mocks {
+		content = fmt.Sprintf("%s\n\n%s", content, mock.String())
+	}
+	fmt.Printf("content: %v\n", content)
+
+	return content, nil
 }
 
-func funcType(ft *ast.FuncType, name []*ast.Ident, resultNumber bool) string {
-	var f string = "func"
+func funcType(ft *ast.FuncType, name []*ast.Ident, resultNumber bool) (fun string) {
+	var f string
 	if len(name) > 0 {
-		f = fmt.Sprintf("%s %s", f, name[0].Name)
+		f = name[0].Name
 	}
 
 	var params []string
@@ -141,6 +210,7 @@ func paramType(param ast.Expr) string {
 	case *ast.MapType:
 		t = fmt.Sprintf("map[%s]%s", paramType(pt.Key), paramType(pt.Value))
 	case *ast.SelectorExpr:
+		importMap[paramType(pt.X)] = true
 		t = fmt.Sprintf("%s.%s", pt.X, pt.Sel)
 	case *ast.StarExpr:
 		t = fmt.Sprintf("*%s", paramType(pt.X))
@@ -149,7 +219,7 @@ func paramType(param ast.Expr) string {
 	case *ast.ChanType:
 		t = fmt.Sprintf("chan %s", paramType(pt.Value))
 	case *ast.FuncType:
-		t = funcType(pt, nil, false)
+		t = fmt.Sprintf("func %s", funcType(pt, nil, false))
 	default:
 		t = fmt.Sprint(reflect.TypeOf(param))
 	}
