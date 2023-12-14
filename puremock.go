@@ -49,7 +49,9 @@ func main() {
 		}
 		defer file.Close()
 
-		fmt.Fprintln(file, content)
+		if _, err = file.WriteString(content); err != nil {
+			panic(err)
+		}
 	} else {
 		fmt.Println(content)
 	}
@@ -151,7 +153,6 @@ func mock(path string) (string, error) {
 	for _, mock := range mocks {
 		content = fmt.Sprintf("%s\n\n%s", content, mock.String())
 	}
-	fmt.Printf("content: %v\n", content)
 
 	return content, nil
 }
